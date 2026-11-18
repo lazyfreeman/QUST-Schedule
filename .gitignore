@@ -1,0 +1,36 @@
+# Gradle 构建目录与缓存
+.gradle/
+build/
+/*/build/
+
+# 本地环境变量与 SDK 路径配置（核心）
+local.properties
+
+# Android Studio / IntelliJ IDEA 配置文件与缓存
+.idea/
+*.iml
+.navigation/
+
+# 签名与证书文件
+*.jks
+*.keystore
+
+# 编译打包输出
+*.apk
+*.aab
+*.dex
+*.class
+
+# 单元测试与构建中间物
+/captures/
+.externalNativeBuild/
+.cxx/
+
+# 系统临时文件
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# 日志文件
+*.log
