@@ -1,6 +1,7 @@
 package com.qust.schedule.calendar
 
 import android.Manifest
+import android.content.ContentProviderOperation
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
@@ -36,20 +37,46 @@ object CalendarHelper {
         return readGranted && writeGranted
     }
 
+    private fun getSafeAccountName(config: TermConfig): String {
+        return if (config.accountName.isBlank()) "qust_schedule_account" else config.accountName
+    }
+
     /**
-     * 获取或创建专属的“青科大课表”日历本
+     * 获取或创建专属的“青科大课表”本地日历本。
+     *
+     * 注意：ACCOUNT_TYPE 必须严格使用 [CalendarContract.ACCOUNT_TYPE_LOCAL] ("LOCAL")。
+     * 若使用自定义类型（如 "com.qust.schedule"），由于该类型未在系统 AccountManager 中注册为 Authenticator，
+     * Android CalendarProvider 会在系统定期同步、重启或账户扫描（removeStaleAccounts）时，
+     * 将其判定为已失效/孤儿账户，从而自动级联删除该日历及名下的所有日程事件。
      */
     fun getOrCreateCalendarId(context: Context, config: TermConfig): Long {
         val contentResolver = context.contentResolver
+        val accountName = getSafeAccountName(config)
+        val accountType = CalendarContract.ACCOUNT_TYPE_LOCAL
 
-        // 1. 查询是否已存在该日历
+        // 0. 清理旧版本可能残留的非 LOCAL 日历（例如旧版本使用过 "com.qust.schedule"），
+        // 避免系统日历中出现残留的同名日历本或随时会被系统清理的失效日历
+        try {
+            val oldSelection = "${CalendarContract.Calendars.ACCOUNT_TYPE} = ? OR (${CalendarContract.Calendars.ACCOUNT_NAME} = ? AND ${CalendarContract.Calendars.ACCOUNT_TYPE} != ?)"
+            val oldArgs = arrayOf("com.qust.schedule", accountName, accountType)
+            val deleteOldUri = CalendarContract.Calendars.CONTENT_URI.buildUpon()
+                .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
+                .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, accountName)
+                .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, accountType)
+                .build()
+            contentResolver.delete(deleteOldUri, oldSelection, oldArgs)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // 1. 查询是否已存在专属本地日历
         val projection = arrayOf(
             CalendarContract.Calendars._ID,
             CalendarContract.Calendars.ACCOUNT_NAME,
             CalendarContract.Calendars.ACCOUNT_TYPE
         )
         val selection = "${CalendarContract.Calendars.ACCOUNT_NAME} = ? AND ${CalendarContract.Calendars.ACCOUNT_TYPE} = ?"
-        val selectionArgs = arrayOf(config.accountName, config.accountType)
+        val selectionArgs = arrayOf(accountName, accountType)
 
         contentResolver.query(
             CalendarContract.Calendars.CONTENT_URI,
@@ -68,13 +95,13 @@ object CalendarHelper {
 
         // 2. 若不存在，创建专属本地日历
         val values = ContentValues().apply {
-            put(CalendarContract.Calendars.ACCOUNT_NAME, config.accountName)
-            put(CalendarContract.Calendars.ACCOUNT_TYPE, config.accountType)
+            put(CalendarContract.Calendars.ACCOUNT_NAME, accountName)
+            put(CalendarContract.Calendars.ACCOUNT_TYPE, accountType)
             put(CalendarContract.Calendars.NAME, config.calendarName)
             put(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, config.calendarName)
             put(CalendarContract.Calendars.CALENDAR_COLOR, Color.parseColor("#00838F"))
             put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL, CalendarContract.Calendars.CAL_ACCESS_OWNER)
-            put(CalendarContract.Calendars.OWNER_ACCOUNT, config.accountName)
+            put(CalendarContract.Calendars.OWNER_ACCOUNT, accountName)
             put(CalendarContract.Calendars.CALENDAR_TIME_ZONE, TimeZone.getDefault().id)
             put(CalendarContract.Calendars.SYNC_EVENTS, 1)
             put(CalendarContract.Calendars.VISIBLE, 1)
@@ -83,8 +110,8 @@ object CalendarHelper {
         // 以 SyncAdapter 模式插入日历
         val uri = CalendarContract.Calendars.CONTENT_URI.buildUpon()
             .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
-            .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, config.accountName)
-            .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, config.accountType)
+            .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, accountName)
+            .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, accountType)
             .build()
 
         val createdUri = contentResolver.insert(uri, values) ?: return -1L
@@ -114,11 +141,18 @@ object CalendarHelper {
         }
 
         val contentResolver = context.contentResolver
+        val accountName = getSafeAccountName(config)
+        val accountType = CalendarContract.ACCOUNT_TYPE_LOCAL
 
-        // 1. 清空当前日历本下的所有旧课程，保证全量更新不会产生冲突与脏数据
+        // 1. 以 SyncAdapter 身份清空当前日历本下的所有旧课程，保证物理彻底删除，不留墓碑数据
         try {
+            val deleteUri = CalendarContract.Events.CONTENT_URI.buildUpon()
+                .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
+                .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, accountName)
+                .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, accountType)
+                .build()
             contentResolver.delete(
-                CalendarContract.Events.CONTENT_URI,
+                deleteUri,
                 "${CalendarContract.Events.CALENDAR_ID} = ?",
                 arrayOf(calendarId.toString())
             )
@@ -128,9 +162,25 @@ object CalendarHelper {
 
         val firstMonday = config.getFirstMondayLocalDate()
         val zoneId = ZoneId.systemDefault()
+        val timeZoneId = TimeZone.getDefault().id
         var insertedCount = 0
 
-        // 2. 遍历每门课程的每一个周次，生成具体公历日程
+        val eventsUri = CalendarContract.Events.CONTENT_URI.buildUpon()
+            .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
+            .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, accountName)
+            .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, accountType)
+            .build()
+
+        val remindersUri = CalendarContract.Reminders.CONTENT_URI.buildUpon()
+            .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
+            .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, accountName)
+            .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, accountType)
+            .build()
+
+        // 2. 遍历每门课程的每一个周次，生成具体公历日程并分批写入
+        val operations = ArrayList<ContentProviderOperation>()
+        val batchLimit = 100 // 每批提交的日程数，防止超出 Binder 事务大小限制
+
         for (course in courses) {
             for (week in course.weeks) {
                 // 计算当前周对应星期几的公历日期
@@ -156,35 +206,58 @@ object CalendarHelper {
                     "\n【已应用夏时制：下午及晚上日程推迟30分钟】"
                 } else ""
 
-                val eventValues = ContentValues().apply {
-                    put(CalendarContract.Events.CALENDAR_ID, calendarId)
-                    put(CalendarContract.Events.TITLE, course.name)
-                    put(CalendarContract.Events.EVENT_LOCATION, course.location)
-                    put(
-                        CalendarContract.Events.DESCRIPTION,
-                        "教师：${course.teacher}\n周次：第${week}周 (原${course.rawWeekStr})\n节次：第${course.startSection}-${course.endSection}节 ($startLocalTime-$endLocalTime)$summerNotice"
+                val description = "教师：${course.teacher}\n周次：第${week}周 (原${course.rawWeekStr})\n节次：第${course.startSection}-${course.endSection}节 ($startLocalTime-$endLocalTime)$summerNotice"
+
+                val eventOpIndex = operations.size
+                operations.add(
+                    ContentProviderOperation.newInsert(eventsUri)
+                        .withValue(CalendarContract.Events.CALENDAR_ID, calendarId)
+                        .withValue(CalendarContract.Events.TITLE, course.name)
+                        .withValue(CalendarContract.Events.EVENT_LOCATION, course.location)
+                        .withValue(CalendarContract.Events.DESCRIPTION, description)
+                        .withValue(CalendarContract.Events.DTSTART, startMillis)
+                        .withValue(CalendarContract.Events.DTEND, endMillis)
+                        .withValue(CalendarContract.Events.EVENT_TIMEZONE, timeZoneId)
+                        .withValue(CalendarContract.Events.EVENT_END_TIMEZONE, timeZoneId)
+                        .withValue(CalendarContract.Events.STATUS, CalendarContract.Events.STATUS_CONFIRMED)
+                        .withValue(CalendarContract.Events.AVAILABILITY, CalendarContract.Events.AVAILABILITY_BUSY)
+                        .withValue(CalendarContract.Events.HAS_ALARM, if (config.reminderMinutes > 0) 1 else 0)
+                        .build()
+                )
+
+                // 添加提前提醒
+                if (config.reminderMinutes > 0) {
+                    operations.add(
+                        ContentProviderOperation.newInsert(remindersUri)
+                            .withValueBackReference(CalendarContract.Reminders.EVENT_ID, eventOpIndex)
+                            .withValue(CalendarContract.Reminders.MINUTES, config.reminderMinutes)
+                            .withValue(CalendarContract.Reminders.METHOD, CalendarContract.Reminders.METHOD_ALERT)
+                            .build()
                     )
-                    put(CalendarContract.Events.DTSTART, startMillis)
-                    put(CalendarContract.Events.DTEND, endMillis)
-                    put(CalendarContract.Events.EVENT_TIMEZONE, TimeZone.getDefault().id)
                 }
 
-                val eventUri = contentResolver.insert(CalendarContract.Events.CONTENT_URI, eventValues)
-                if (eventUri != null) {
-                    insertedCount++
-                    val eventId = ContentUris.parseId(eventUri)
+                insertedCount++
 
-                    // 添加提前提醒 (默认提前15分钟通知)
-                    if (config.reminderMinutes > 0) {
-                        val reminderValues = ContentValues().apply {
-                            put(CalendarContract.Reminders.EVENT_ID, eventId)
-                            put(CalendarContract.Reminders.MINUTES, config.reminderMinutes)
-                            put(CalendarContract.Reminders.METHOD, CalendarContract.Reminders.METHOD_ALERT)
-                        }
-                        contentResolver.insert(CalendarContract.Reminders.CONTENT_URI, reminderValues)
+                // 分批提交，保证内存友好与极高执行性能
+                if (operations.size >= batchLimit * 2) {
+                    try {
+                        contentResolver.applyBatch(CalendarContract.AUTHORITY, operations)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
                     }
+                    operations.clear()
                 }
             }
+        }
+
+        // 提交剩余批次
+        if (operations.isNotEmpty()) {
+            try {
+                contentResolver.applyBatch(CalendarContract.AUTHORITY, operations)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            operations.clear()
         }
 
         return SyncResult(true, insertedCount, "成功同步 $insertedCount 节课程到系统日历！")
@@ -203,8 +276,17 @@ object CalendarHelper {
             return SyncResult(true, 0, "日历为空或已被清除")
         }
 
+        val accountName = getSafeAccountName(config)
+        val accountType = CalendarContract.ACCOUNT_TYPE_LOCAL
+
+        val deleteUri = CalendarContract.Events.CONTENT_URI.buildUpon()
+            .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
+            .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, accountName)
+            .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, accountType)
+            .build()
+
         val count = context.contentResolver.delete(
-            CalendarContract.Events.CONTENT_URI,
+            deleteUri,
             "${CalendarContract.Events.CALENDAR_ID} = ?",
             arrayOf(calendarId.toString())
         )

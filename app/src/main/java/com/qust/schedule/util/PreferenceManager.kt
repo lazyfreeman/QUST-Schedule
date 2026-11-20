@@ -37,7 +37,15 @@ class PreferenceManager(context: Context) {
     fun getTermConfig(): TermConfig {
         val json = prefs.getString(KEY_TERM_CONFIG, null) ?: return TermConfig()
         return try {
-            gson.fromJson(json, TermConfig::class.java) ?: TermConfig()
+            val config = gson.fromJson(json, TermConfig::class.java) ?: TermConfig()
+            // 修复历史旧配置：如果本地保存过非 LOCAL 账户类型，自动迁移纠正为 LOCAL，避免被系统清理
+            if (config.accountType != android.provider.CalendarContract.ACCOUNT_TYPE_LOCAL) {
+                val fixedConfig = config.copy(accountType = android.provider.CalendarContract.ACCOUNT_TYPE_LOCAL)
+                saveTermConfig(fixedConfig)
+                fixedConfig
+            } else {
+                config
+            }
         } catch (e: Exception) {
             TermConfig()
         }
