@@ -40,6 +40,11 @@ class LoginWebViewActivity : ComponentActivity() {
     private var isExtracting = false
     private var hasAutoLoggedInThisSession = false
     private var hasJumpedFromPortal = false
+    private var hasAutoLoginAttempted = false
+    private var hasLoginFailed = false
+    private var loginFailureReason: String? = null
+    private var pendingCapturedUser: String? = null
+    private var pendingCapturedPwd: String? = null
 
     companion object {
         const val EXTRA_RAW_JSON = "extra_raw_json"
@@ -248,6 +253,19 @@ class LoginWebViewActivity : ComponentActivity() {
         CookieManager.getInstance().flush()
     }
 
+    private fun checkAndSavePendingCredentials() {
+        val u = pendingCapturedUser
+        val p = pendingCapturedPwd
+        if (!u.isNullOrBlank() && !p.isNullOrBlank()) {
+            if (u != prefManager.getSavedUsername() || p != prefManager.getSavedPassword()) {
+                prefManager.saveUserCredentials(u, p, true)
+                Toast.makeText(this, "登录成功，已更新保存的账号密码！", Toast.LENGTH_SHORT).show()
+            }
+            pendingCapturedUser = null
+            pendingCapturedPwd = null
+        }
+    }
+
     /**
      * 根据当前页面的 URL 智能分发自动化逻辑
      */
@@ -257,6 +275,11 @@ class LoginWebViewActivity : ComponentActivity() {
         when {
             // 阶段 1：教务系统环境（已进入教务系统）
             isEducationalSystem(url) -> {
+                hasAutoLoggedInThisSession = true
+                hasLoginFailed = false
+                hasAutoLoginAttempted = false
+                checkAndSavePendingCredentials()
+
                 when {
                     // 已经在个人课表页面：直接发起课表提取
                     url.contains("xskbcx") || url.contains("kbcx_cxXskbcxIndex") -> {
@@ -279,16 +302,54 @@ class LoginWebViewActivity : ComponentActivity() {
                 }
             }
 
-            // 阶段 2：WebVPN 域内
-            url.contains("wvpn.qust.edu.cn") || url.contains("cas.qust.edu.cn") -> {
+            // 阶段 2：WebVPN 域内 / 统一身份认证
+            url.contains("qust.edu.cn") -> {
                 if (isLoginUrl(url)) {
-                    // 登录页面：尝试自动填充和自动提交
                     hasJumpedFromPortal = false
-                    tvStatus.text = "检测到登录页，正在准备自动填密..."
-                    injectAutoLoginScript()
+
+                    if (hasLoginFailed) {
+                        tvStatus.text = if (loginFailureReason != null) {
+                            "登录失败: $loginFailureReason，请点击【凭据设置】修改或手动输入"
+                        } else {
+                            "账号或密码可能有误，请点击【凭据设置】修改或手动输入"
+                        }
+                        if (isFinished) {
+                            injectAutoLoginScript(allowSubmit = false)
+                        }
+                    } else if (hasAutoLoginAttempted) {
+                        // 已经尝试过自动登录，页面又回到了或停留在登录页，说明认证失败
+                        hasLoginFailed = true
+                        tvStatus.text = "自动登录未成功，请检查账号密码（点击【凭据设置】）或手动输入"
+                        Toast.makeText(this, "自动登录未成功，请检查学号与密码是否正确", Toast.LENGTH_SHORT).show()
+                        if (isFinished) {
+                            injectAutoLoginScript(allowSubmit = false)
+                        }
+                    } else {
+                        val savedUser = prefManager.getSavedUsername()
+                        val savedPwd = prefManager.getSavedPassword()
+                        val isAutoEnabled = prefManager.isAutoLoginEnabled()
+                        val canAutoFill = savedUser.isNotBlank() && savedPwd.isNotBlank() && isAutoEnabled
+
+                        if (canAutoFill) {
+                            tvStatus.text = "检测到登录页，正在准备自动登录..."
+                            if (isFinished) {
+                                hasAutoLoginAttempted = true
+                                injectAutoLoginScript(allowSubmit = true)
+                            }
+                        } else {
+                            tvStatus.text = "检测到登录页，请在页面中输入账号密码登录"
+                            if (isFinished) {
+                                injectAutoLoginScript(allowSubmit = false)
+                            }
+                        }
+                    }
                 } else {
                     // WebVPN 门户首页：自动寻找“教务管理系统”卡片并跳转
                     hasAutoLoggedInThisSession = true
+                    hasLoginFailed = false
+                    hasAutoLoginAttempted = false
+                    checkAndSavePendingCredentials()
+
                     tvStatus.text = "已登录 WebVPN，正在自动跳转进入教务系统..."
                     if (!hasJumpedFromPortal) {
                         tryOpenJwglxtFromPortal()
@@ -305,7 +366,7 @@ class LoginWebViewActivity : ComponentActivity() {
     /**
      * 自动登录脚本：智能识别青科大统一身份认证/WebVPN登录表单，自动填入凭据并尝试提交
      */
-    private fun injectAutoLoginScript() {
+    private fun injectAutoLoginScript(allowSubmit: Boolean) {
         val savedUser = prefManager.getSavedUsername()
         val savedPwd = prefManager.getSavedPassword()
         val isAutoEnabled = prefManager.isAutoLoginEnabled()
@@ -320,7 +381,101 @@ class LoginWebViewActivity : ComponentActivity() {
                 var autoFillUser = '$jsUser';
                 var autoFillPwd = '$jsPwd';
                 var canAutoFill = $canAutoFill;
+                var allowSubmit = $allowSubmit;
                 var autoLoginDone = false;
+                var notifiedCaptcha = false;
+                var loginFailedReported = false;
+
+                if (window._qustFillTimer) {
+                    clearInterval(window._qustFillTimer);
+                    window._qustFillTimer = null;
+                }
+                if (window._qustObserver) {
+                    try { window._qustObserver.disconnect(); } catch(e) {}
+                    window._qustObserver = null;
+                }
+
+                function checkLoginError() {
+                    try {
+                        var errorSelectors = [
+                            '#msg', '#errorMsg', '#error_msg', '#errormsg', '#showErrorDiv',
+                            '.auth_error', '.error_msg', '.error-message', '.err-message',
+                            '.el-message--error', '.el-message__content', '.el-form-item__error',
+                            '.alert-danger', '.login-error', '.tips-err', '.tips_error',
+                            'div[role="alert"]', '.el-alert--error', '.el-notification__content',
+                            '.c-form-error', '.form-error', '.error_tip'
+                        ];
+
+                        var errorKeywords = [
+                            '密码错误', '密码不正确', '用户名或密码', '账号或密码', '学号或密码',
+                            '用户名不存在', '账号不存在', '用户不存在', '认证失败', '凭证',
+                            '锁定', '验证码错误', '验证码不正确', '验证码有误', '验证码不能为空',
+                            'Bad credentials', 'Invalid credentials', 'Login failed'
+                        ];
+
+                        for (var i = 0; i < errorSelectors.length; i++) {
+                            var els = document.querySelectorAll(errorSelectors[i]);
+                            for (var j = 0; j < els.length; j++) {
+                                var el = els[j];
+                                var t = (el.innerText || el.textContent || '').trim();
+                                if (!t) continue;
+                                var rect = el.getBoundingClientRect();
+                                var style = window.getComputedStyle(el);
+                                if (style.display === 'none' || style.visibility === 'hidden') continue;
+                                for (var k = 0; k < errorKeywords.length; k++) {
+                                    if (t.indexOf(errorKeywords[k]) !== -1) {
+                                        return t;
+                                    }
+                                }
+                            }
+                        }
+
+                        var spans = document.querySelectorAll('span, p, div, label, font');
+                        for (var m = 0; m < spans.length; m++) {
+                            var node = spans[m];
+                            var text = (node.innerText || node.textContent || '').trim();
+                            if (text.length > 0 && text.length <= 60) {
+                                for (var n = 0; n < errorKeywords.length; n++) {
+                                    if (text.indexOf(errorKeywords[n]) !== -1) {
+                                        var r = node.getBoundingClientRect();
+                                        var s = window.getComputedStyle(node);
+                                        if (s.display !== 'none' && s.visibility !== 'hidden' && (r.width > 0 || r.height > 0)) {
+                                            return text;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch(e) {}
+                    return null;
+                }
+
+                function reportErrorIfFound() {
+                    if (loginFailedReported) return true;
+                    var err = checkLoginError();
+                    if (err) {
+                        loginFailedReported = true;
+                        autoLoginDone = true;
+                        window.AndroidBridge.onLoginFailed(err);
+                        return true;
+                    }
+                    return false;
+                }
+
+                if (reportErrorIfFound()) {
+                    return;
+                }
+
+                try {
+                    window._qustObserver = new MutationObserver(function() {
+                        reportErrorIfFound();
+                    });
+                    window._qustObserver.observe(document.body || document.documentElement, {
+                        childList: true,
+                        subtree: true,
+                        characterData: true
+                    });
+                } catch(e) {}
 
                 function hookCredentialCapture() {
                     try {
@@ -348,7 +503,9 @@ class LoginWebViewActivity : ComponentActivity() {
                         var uEl = document.querySelector('input#username, input[name="username"], input[name="userName"], input[placeholder*="学号"], input[placeholder*="账号"], input[placeholder*="用户名"]');
                         var pEl = document.querySelector('input#password, input[name="password"], input[type="password"]');
                         if (uEl && pEl && uEl.value && pEl.value) {
-                            window.AndroidBridge.onCaptureCredentials(uEl.value, pEl.value);
+                            if (uEl.value.trim().length >= 4 && pEl.value.trim().length >= 4) {
+                                window.AndroidBridge.onCaptureCredentials(uEl.value.trim(), pEl.value.trim());
+                            }
                         }
                     } catch(e) {}
                 }
@@ -368,25 +525,36 @@ class LoginWebViewActivity : ComponentActivity() {
                 function tryFillAndSubmit() {
                     hookCredentialCapture();
 
-                    if (!canAutoFill || autoLoginDone) return;
+                    if (reportErrorIfFound()) return;
+                    if (autoLoginDone) return;
 
                     var userEl = document.querySelector('input#username, input[name="username"], input[name="userName"], input[placeholder*="学号"], input[placeholder*="账号"], input[placeholder*="用户名"], input.el-input__inner[type="text"]');
                     var pwdEl = document.querySelector('input#password, input[name="password"], input[type="password"], input.el-input__inner[type="password"]');
 
                     if (!userEl || !pwdEl) return;
 
-                    // 填入学号和密码
-                    setVal(userEl, autoFillUser);
-                    setVal(pwdEl, autoFillPwd);
+                    if (!canAutoFill) {
+                        autoLoginDone = true;
+                        return;
+                    }
 
-                    // 兼容 ElementUI / Vue 内部数据模型
-                    try {
-                        var vueMain = document.getElementById('vue_main');
-                        if (vueMain && vueMain.__vue__) {
-                            vueMain.__vue__.passwordLoginUsername = autoFillUser;
-                            vueMain.__vue__.passwordLoginPassword = autoFillPwd;
+                    if (allowSubmit) {
+                        if (!userEl.value || userEl.value === autoFillUser) {
+                            setVal(userEl, autoFillUser);
                         }
-                    } catch(e) {}
+                        if (!pwdEl.value || pwdEl.value === autoFillPwd) {
+                            setVal(pwdEl, autoFillPwd);
+                        }
+
+                        // 兼容 ElementUI / Vue 内部数据模型
+                        try {
+                            var vueMain = document.getElementById('vue_main');
+                            if (vueMain && vueMain.__vue__) {
+                                vueMain.__vue__.passwordLoginUsername = autoFillUser;
+                                vueMain.__vue__.passwordLoginPassword = autoFillPwd;
+                            }
+                        } catch(e) {}
+                    }
 
                     // 自动勾选记住密码/记住我
                     try {
@@ -408,13 +576,20 @@ class LoginWebViewActivity : ComponentActivity() {
                     }
 
                     if (isCaptchaVisible && (!captchaEl.value || captchaEl.value.trim() === '')) {
-                        // 存在验证码且尚未填写：提示用户输入验证码并聚焦
-                        captchaEl.focus();
-                        window.AndroidBridge.onNotifyNeedsCaptcha();
+                        if (!notifiedCaptcha) {
+                            notifiedCaptcha = true;
+                            captchaEl.focus();
+                            window.AndroidBridge.onNotifyNeedsCaptcha();
+                        }
                         return;
                     }
 
-                    // 没有验证码或验证码已填：自动触发登录按钮提交
+                    if (!allowSubmit) {
+                        autoLoginDone = true;
+                        return;
+                    }
+
+                    // 自动触发登录按钮提交
                     autoLoginDone = true;
                     window.AndroidBridge.onAutoLoginTriggered();
 
@@ -432,17 +607,28 @@ class LoginWebViewActivity : ComponentActivity() {
                         }
                         if (submitBtn) {
                             submitBtn.click();
+
+                            setTimeout(function() {
+                                reportErrorIfFound();
+                            }, 1500);
+
+                            setTimeout(function() {
+                                if (!reportErrorIfFound()) {
+                                    window.AndroidBridge.onCheckLoginStalled();
+                                }
+                            }, 3500);
                         }
                     }, 500);
                 }
 
                 // 轮询重试检测登录框（应对异步渲染页面）
                 var checkCount = 0;
-                var fillTimer = setInterval(function() {
+                window._qustFillTimer = setInterval(function() {
                     checkCount++;
                     tryFillAndSubmit();
                     if (autoLoginDone || checkCount > 25) {
-                        clearInterval(fillTimer);
+                        clearInterval(window._qustFillTimer);
+                        window._qustFillTimer = null;
                     }
                 }, 400);
 
@@ -759,11 +945,20 @@ class LoginWebViewActivity : ComponentActivity() {
                 val p = etPwd.text.toString().trim()
                 if (u.isNotBlank() && p.isNotBlank()) {
                     prefManager.saveUserCredentials(u, p, true)
+                    hasAutoLoginAttempted = true
+                    hasLoginFailed = false
+                    loginFailureReason = null
+                    tvStatus.text = "凭据已保存，正在重新执行自动登录..."
                     Toast.makeText(this, "凭据已保存，正在重新执行自动登录", Toast.LENGTH_SHORT).show()
-                    injectAutoLoginScript()
+                    injectAutoLoginScript(allowSubmit = true)
                 } else {
                     prefManager.clearUserCredentials()
+                    hasAutoLoginAttempted = false
+                    hasLoginFailed = false
+                    loginFailureReason = null
+                    tvStatus.text = "已清除凭据，请在页面中手动输入登录"
                     Toast.makeText(this, "已清除凭据", Toast.LENGTH_SHORT).show()
+                    injectAutoLoginScript(allowSubmit = false)
                 }
             }
             .setNegativeButton("取消", null)
@@ -783,6 +978,40 @@ class LoginWebViewActivity : ComponentActivity() {
         @JavascriptInterface
         fun onDebugLog(tag: String, msg: String) {
             android.util.Log.i("QUST_DEBUG", "[$tag] $msg")
+        }
+
+        @Suppress("unused")
+        @JavascriptInterface
+        fun onLoginFailed(errorMsg: String) {
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                hasLoginFailed = true
+                loginFailureReason = errorMsg
+                tvStatus.text = "登录失败: $errorMsg，请点击【凭据设置】修改或手动输入"
+                Toast.makeText(
+                    this@LoginWebViewActivity,
+                    "登录失败: $errorMsg\n请检查学号或密码是否正确",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+
+        @Suppress("unused")
+        @JavascriptInterface
+        fun onCheckLoginStalled() {
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                val currentUrl = webView.url ?: ""
+                if (isLoginUrl(currentUrl) && !hasAutoLoggedInThisSession) {
+                    hasLoginFailed = true
+                    tvStatus.text = "登录未成功，请检查账号密码（可点击右上角【凭据设置】修改）或手动登录"
+                    Toast.makeText(
+                        this@LoginWebViewActivity,
+                        "登录未成功，请检查学号与密码是否正确",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
         }
 
         @Suppress("unused")
@@ -819,6 +1048,8 @@ class LoginWebViewActivity : ComponentActivity() {
         fun onCaptureCredentials(username: String, password: String) {
             runOnUiThread {
                 if (username.isNotBlank() && password.isNotBlank()) {
+                    pendingCapturedUser = username
+                    pendingCapturedPwd = password
                     if (!prefManager.hasUserCredentials()) {
                         prefManager.saveUserCredentials(username, password, true)
                         Toast.makeText(this@LoginWebViewActivity, "已为您记住账号密码，下次更新将全自动完成！", Toast.LENGTH_SHORT).show()
