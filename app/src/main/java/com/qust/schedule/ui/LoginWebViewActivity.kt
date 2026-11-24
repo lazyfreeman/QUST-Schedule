@@ -256,10 +256,12 @@ class LoginWebViewActivity : ComponentActivity() {
     private fun checkAndSavePendingCredentials() {
         val u = pendingCapturedUser
         val p = pendingCapturedPwd
-        if (!u.isNullOrBlank() && !p.isNullOrBlank()) {
+        if (!u.isNullOrBlank() && !p.isNullOrBlank() && !p.startsWith("_RSA", ignoreCase = true)) {
+            val isFirstTime = !prefManager.hasUserCredentials()
             if (u != prefManager.getSavedUsername() || p != prefManager.getSavedPassword()) {
                 prefManager.saveUserCredentials(u, p, true)
-                Toast.makeText(this, "登录成功，已更新保存的账号密码！", Toast.LENGTH_SHORT).show()
+                val msg = if (isFirstTime) "登录成功，已为您记住账号密码！下次将全自动登录" else "登录成功，已更新保存的账号密码！"
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
             }
             pendingCapturedUser = null
             pendingCapturedPwd = null
@@ -477,36 +479,95 @@ class LoginWebViewActivity : ComponentActivity() {
                     });
                 } catch(e) {}
 
-                function hookCredentialCapture() {
+                var _capturedUser = '';
+                var _capturedPwd = '';
+
+                function isRsaCipher(str) {
+                    if (!str || typeof str !== 'string') return false;
+                    var trimmed = str.trim();
+                    return trimmed.indexOf('_RSA') === 0 || trimmed.indexOf('_rsa') === 0;
+                }
+
+                function tryRecordInputsFromDom() {
                     try {
-                        var forms = document.querySelectorAll('form');
-                        for (var i = 0; i < forms.length; i++) {
-                            forms[i].addEventListener('submit', function() {
-                                captureInputs();
-                            });
+                        function searchDoc(doc) {
+                            if (!doc) return;
+                            try {
+                                var uEl = doc.querySelector('input#username, input[name="username"], input[name="userName"], input[name="user_name"], input[placeholder*="学号"], input[placeholder*="账号"], input[placeholder*="用户名"], input.el-input__inner[type="text"]');
+                                var pEl = doc.querySelector('input#password, input[name="password"], input[name="pwd"], input[type="password"], input.el-input__inner[type="password"]');
+                                if (uEl && uEl.value) {
+                                    var uVal = uEl.value.trim();
+                                    if (uVal.length >= 2) {
+                                        _capturedUser = uVal;
+                                    }
+                                }
+                                if (pEl && pEl.value) {
+                                    var pVal = pEl.value.trim();
+                                    // 关键：只有非 _RSA 密文时才记录为明文密码，避免网页前端加密后覆盖掉原文
+                                    if (pVal.length >= 1 && !isRsaCipher(pVal)) {
+                                        _capturedPwd = pVal;
+                                    }
+                                }
+                            } catch(e) {}
                         }
-                        var allButtons = document.querySelectorAll('button, input[type="submit"], .btn-submit, .el-button');
-                        for (var j = 0; j < allButtons.length; j++) {
-                            var b = allButtons[j];
-                            var t = (b.innerText || b.value || '').trim();
-                            if (t.indexOf('登录') !== -1 || t.indexOf('Login') !== -1) {
-                                b.addEventListener('click', function() {
-                                    setTimeout(captureInputs, 200);
-                                });
+                        searchDoc(document);
+                        for (var i = 0; i < window.frames.length; i++) {
+                            try {
+                                searchDoc(window.frames[i].document);
+                            } catch(e) {}
+                        }
+                    } catch(e) {}
+                }
+
+                function reportCapturedIfReady() {
+                    try {
+                        tryRecordInputsFromDom();
+                        if (_capturedUser && _capturedPwd && _capturedUser.length >= 4 && _capturedPwd.length >= 4) {
+                            if (!isRsaCipher(_capturedPwd)) {
+                                window.AndroidBridge.onCaptureCredentials(_capturedUser, _capturedPwd);
                             }
                         }
                     } catch(e) {}
                 }
 
-                function captureInputs() {
+                function hookCredentialCapture() {
                     try {
-                        var uEl = document.querySelector('input#username, input[name="username"], input[name="userName"], input[placeholder*="学号"], input[placeholder*="账号"], input[placeholder*="用户名"]');
-                        var pEl = document.querySelector('input#password, input[name="password"], input[type="password"]');
-                        if (uEl && pEl && uEl.value && pEl.value) {
-                            if (uEl.value.trim().length >= 4 && pEl.value.trim().length >= 4) {
-                                window.AndroidBridge.onCaptureCredentials(uEl.value.trim(), pEl.value.trim());
-                            }
+                        if (!window._qustCredHooked) {
+                            window._qustCredHooked = true;
+
+                            var onInputHandler = function() {
+                                tryRecordInputsFromDom();
+                            };
+
+                            // 全局监听用户输入事件（capture: true 优先捕获），在用户打字时即刻记录明文
+                            document.addEventListener('input', onInputHandler, true);
+                            document.addEventListener('change', onInputHandler, true);
+                            document.addEventListener('keyup', onInputHandler, true);
+                            document.addEventListener('blur', onInputHandler, true);
+
+                            // 表单提交阶段：抢在任何网页自身加密脚本前记录并上报明文
+                            document.addEventListener('submit', function() {
+                                tryRecordInputsFromDom();
+                                reportCapturedIfReady();
+                            }, true);
+
+                            // 按钮点击阶段：抢在任何网页自身 onclick 的 RSA 加密逻辑执行前提取明文
+                            document.addEventListener('click', function(e) {
+                                try {
+                                    var target = e.target;
+                                    if (target) {
+                                        var text = (target.innerText || target.value || target.textContent || '').trim();
+                                        if (text.indexOf('登录') !== -1 || text.indexOf('Login') !== -1 ||
+                                            (target.getAttribute && (target.getAttribute('type') === 'submit' || target.getAttribute('role') === 'button'))) {
+                                            tryRecordInputsFromDom();
+                                            reportCapturedIfReady();
+                                        }
+                                    }
+                                } catch(err) {}
+                            }, true);
                         }
+
+                        tryRecordInputsFromDom();
                     } catch(e) {}
                 }
 
@@ -1047,13 +1108,11 @@ class LoginWebViewActivity : ComponentActivity() {
         @JavascriptInterface
         fun onCaptureCredentials(username: String, password: String) {
             runOnUiThread {
-                if (username.isNotBlank() && password.isNotBlank()) {
-                    pendingCapturedUser = username
-                    pendingCapturedPwd = password
-                    if (!prefManager.hasUserCredentials()) {
-                        prefManager.saveUserCredentials(username, password, true)
-                        Toast.makeText(this@LoginWebViewActivity, "已为您记住账号密码，下次更新将全自动完成！", Toast.LENGTH_SHORT).show()
-                    }
+                val u = username.trim()
+                val p = password.trim()
+                if (u.isNotBlank() && p.isNotBlank() && !p.startsWith("_RSA", ignoreCase = true)) {
+                    pendingCapturedUser = u
+                    pendingCapturedPwd = p
                 }
             }
         }
@@ -1066,6 +1125,7 @@ class LoginWebViewActivity : ComponentActivity() {
                 isExtracting = false
                 val courses = ZhengFangParser.parseJson(jsonStr)
                 if (courses.isNotEmpty()) {
+                    checkAndSavePendingCredentials()
                     Toast.makeText(
                         this@LoginWebViewActivity,
                         "全自动获取成功！已识别到 ${courses.size} 门课程",

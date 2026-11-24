@@ -99,7 +99,12 @@ class PreferenceManager(context: Context) {
     }
 
     fun saveUserCredentials(username: String, password: String, autoLogin: Boolean = true) {
-        val encodedPassword = android.util.Base64.encodeToString(password.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+        val trimmedPwd = password.trim()
+        if (trimmedPwd.startsWith("_RSA", ignoreCase = true)) {
+            // 严禁将 _RSA 密文当作密码原文保存
+            return
+        }
+        val encodedPassword = android.util.Base64.encodeToString(trimmedPwd.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
         prefs.edit()
             .putString(KEY_SAVED_USERNAME, username.trim())
             .putString(KEY_SAVED_PASSWORD, encodedPassword)
@@ -114,11 +119,13 @@ class PreferenceManager(context: Context) {
     fun getSavedPassword(): String {
         val encoded = prefs.getString(KEY_SAVED_PASSWORD, "") ?: ""
         if (encoded.isBlank()) return ""
-        return try {
+        val decoded = try {
             String(android.util.Base64.decode(encoded, android.util.Base64.NO_WRAP), Charsets.UTF_8)
         } catch (e: Exception) {
             ""
         }
+        // 如果历史误存了 _RSA 开头的密文，过滤为空字符串，方便用户查看和重新录入正确的密码原文
+        return if (decoded.startsWith("_RSA", ignoreCase = true)) "" else decoded
     }
 
     fun isAutoLoginEnabled(): Boolean {
