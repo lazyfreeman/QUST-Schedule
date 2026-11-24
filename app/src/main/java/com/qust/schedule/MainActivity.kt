@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
@@ -18,6 +19,7 @@ import com.qust.schedule.model.TermConfig
 import com.qust.schedule.model.TimeSlot
 import com.qust.schedule.parser.ZhengFangParser
 import com.qust.schedule.ui.CustomTimeSlotsDialog
+import com.qust.schedule.ui.FirstDayGuideDialog
 import com.qust.schedule.ui.LoginWebViewActivity
 import com.qust.schedule.ui.MainScreen
 import com.qust.schedule.ui.SettingsDialog
@@ -39,6 +41,8 @@ class MainActivity : ComponentActivity() {
     private var lastSyncTime by mutableStateOf<String?>(null)
     private var showSettingsDialog by mutableStateOf(false)
     private var showCustomTimeSlotsDialog by mutableStateOf(false)
+    private var showFirstDayGuideDialog by mutableStateOf(false)
+    private var importedCourseCount by mutableIntStateOf(0)
 
     // 登录与课表抓取回调
     private val loginLauncher = registerForActivityResult(
@@ -51,7 +55,8 @@ class MainActivity : ComponentActivity() {
                 if (parsed.isNotEmpty()) {
                     courses = parsed
                     prefManager.saveCourses(parsed)
-                    Toast.makeText(this, "成功获取 ${parsed.size} 门课程！点击【同步到日历】即可写入日程", Toast.LENGTH_LONG).show()
+                    importedCourseCount = parsed.size
+                    showFirstDayGuideDialog = true
                 } else {
                     Toast.makeText(this, "解析课表数据为空，请重试", Toast.LENGTH_SHORT).show()
                 }
@@ -162,6 +167,34 @@ class MainActivity : ComponentActivity() {
                             prefManager.saveTimeSlots(updatedSlots, isCustomized = true)
                             showCustomTimeSlotsDialog = false
                             Toast.makeText(this, "作息时间已更新，建议重新点击【同步到日历】生效", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                }
+
+                if (showFirstDayGuideDialog) {
+                    FirstDayGuideDialog(
+                        initialDate = termConfig.getFirstMondayLocalDate(),
+                        courseCount = importedCourseCount,
+                        onDismiss = {
+                            showFirstDayGuideDialog = false
+                            Toast.makeText(
+                                this,
+                                "成功获取 $importedCourseCount 门课程！点击【同步到日历】即可写入日程",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        },
+                        onConfirm = { confirmedMonday ->
+                            val updatedConfig = termConfig.copy(
+                                firstMonday = confirmedMonday.format(DateTimeFormatter.ISO_LOCAL_DATE)
+                            )
+                            termConfig = updatedConfig
+                            prefManager.saveTermConfig(updatedConfig)
+                            showFirstDayGuideDialog = false
+                            Toast.makeText(
+                                this,
+                                "第一天上课日期已设置为 ${confirmedMonday.format(DateTimeFormatter.ISO_LOCAL_DATE)}！点击【同步到日历】即可写入日程",
+                                Toast.LENGTH_LONG
+                            ).show()
                         }
                     )
                 }

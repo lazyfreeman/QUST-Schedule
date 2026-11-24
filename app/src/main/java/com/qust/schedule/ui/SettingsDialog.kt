@@ -63,6 +63,7 @@ fun SettingsDialog(
     onOpenCustomTimeSlots: () -> Unit
 ) {
     var firstMonday by remember { mutableStateOf(initialConfig.firstMonday) }
+    var isDateValid by remember { mutableStateOf(true) }
     var reminderMinutes by remember { mutableIntStateOf(initialConfig.reminderMinutes) }
     var calendarName by remember { mutableStateOf(initialConfig.calendarName) }
     var enableSummerTime by remember { mutableStateOf(initialConfig.enableSummerTime) }
@@ -198,17 +199,24 @@ fun SettingsDialog(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 Text(
-                    text = "开学第一周周一公历日期 (格式: YYYY-MM-DD)",
+                    text = "开学第一天上课日期 (第一周)",
                     fontWeight = FontWeight.Medium,
                     fontSize = 13.sp
                 )
                 Spacer(modifier = Modifier.height(4.dp))
-                OutlinedTextField(
-                    value = firstMonday,
-                    onValueChange = { firstMonday = it },
-                    placeholder = { Text("例: 2026-03-02") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                DateInputFields(
+                    initialDate = remember(initialConfig.firstMonday) { initialConfig.getFirstMondayLocalDate() },
+                    onDateChanged = { valid, date, _ ->
+                        isDateValid = valid
+                        if (valid && date != null) {
+                            val targetMonday = if (date.dayOfWeek == java.time.DayOfWeek.MONDAY) {
+                                date
+                            } else {
+                                date.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+                            }
+                            firstMonday = targetMonday.format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE)
+                        }
+                    }
                 )
 
                 Spacer(modifier = Modifier.height(14.dp))
@@ -349,6 +357,7 @@ fun SettingsDialog(
         confirmButton = {
             Button(
                 colors = ButtonDefaults.buttonColors(containerColor = QustPrimary),
+                enabled = isDateValid,
                 onClick = {
                     val updated = initialConfig.copy(
                         firstMonday = firstMonday.trim(),
