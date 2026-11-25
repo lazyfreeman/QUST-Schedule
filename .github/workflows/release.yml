@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 拉取完整历史和 tag，用于生成更新日志
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -40,6 +42,46 @@ jobs:
           echo "apk_name=${APK_NAME}" >> $GITHUB_OUTPUT
           echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
 
+      - name: Generate Changelog
+        id: changelog
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG_NAME="${GITHUB_REF_NAME}"
+          PREV_TAG=$(git describe --tags --abbrev=0 "${TAG_NAME}^" 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            RANGE="${PREV_TAG}..${TAG_NAME}"
+          else
+            RANGE="${TAG_NAME}"
+          fi
+          git log "$RANGE" --no-merges --pretty=format:'%s' \
+            | grep -v 'bump version' > /tmp/commits.txt || true
+
+          echo "## 更新内容" > release_notes.md
+          echo "" >> release_notes.md
+
+          # 按提交类型分组：feat → 新功能，fix → 问题修复，其余 → 其他改进
+          emit_section() {
+            local title="$1" lines="$2"
+            if [ -n "$lines" ]; then
+              printf '### %s\n\n%s\n\n' "$title" "$lines" >> release_notes.md
+            fi
+          }
+          strip_prefix() { sed -E 's/^[a-z]+(\([^)]*\))?!?:[[:space:]]*//; s/^/- /'; }
+
+          FEATS=$(grep -E '^feat(\(|:|!)' /tmp/commits.txt | strip_prefix || true)
+          FIXES=$(grep -E '^fix(\(|:|!)' /tmp/commits.txt | strip_prefix || true)
+          OTHERS=$(grep -vE '^(feat|fix)(\(|:|!)' /tmp/commits.txt | strip_prefix || true)
+
+          emit_section "新功能" "$FEATS"
+          emit_section "问题修复" "$FIXES"
+          emit_section "其他改进" "$OTHERS"
+
+          if [ -n "$PREV_TAG" ]; then
+            printf '[查看完整变更](https://github.com/%s/compare/%s...%s)\n' \
+              "$GITHUB_REPOSITORY" "$PREV_TAG" "$TAG_NAME" >> release_notes.md
+          fi
+          cat release_notes.md
+
       - name: Create GitHub Release and Upload APK
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
@@ -48,7 +90,7 @@ jobs:
           name: QUST-Schedule ${{ steps.prepare_apk.outputs.tag_name }}
           draft: false
           prerelease: false
-          generate_release_notes: true
+          body_path: release_notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
