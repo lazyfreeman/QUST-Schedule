@@ -36,7 +36,6 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -184,19 +183,7 @@ fun MainScreen(
                     }
                 },
                 actions = {
-                    // 同步到日历快捷按钮
-                    IconButton(
-                        onClick = onSyncCalendar,
-                        enabled = courses.isNotEmpty()
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Sync,
-                            contentDescription = "同步到日历",
-                            tint = if (courses.isNotEmpty()) Color.White else Color.White.copy(alpha = 0.4f)
-                        )
-                    }
-
-                    // 更多选项
+                    // 更多选项（同步到日历入口在菜单内，避免顶部图标被误认为刷新课表）
                     Box {
                         IconButton(onClick = { showMoreMenu = true }) {
                             Icon(
@@ -227,7 +214,7 @@ fun MainScreen(
                                     onSyncCalendar()
                                 },
                                 leadingIcon = {
-                                    Icon(Icons.Default.Sync, contentDescription = null, tint = QustSecondary)
+                                    Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = QustSecondary)
                                 },
                                 enabled = courses.isNotEmpty()
                             )
