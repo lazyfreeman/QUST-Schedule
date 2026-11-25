@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="qust_primary">#006064</color>
-    <color name="qust_secondary">#00838F</color>
+    <color name="qust_primary">#1565C0</color>
+    <color name="qust_secondary">#1E88E5</color>
     <color name="white">#FFFFFFFF</color>
 </resources>

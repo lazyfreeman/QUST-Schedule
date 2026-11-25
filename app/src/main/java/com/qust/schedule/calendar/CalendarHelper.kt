@@ -99,7 +99,7 @@ object CalendarHelper {
             put(CalendarContract.Calendars.ACCOUNT_TYPE, accountType)
             put(CalendarContract.Calendars.NAME, config.calendarName)
             put(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, config.calendarName)
-            put(CalendarContract.Calendars.CALENDAR_COLOR, Color.parseColor("#00838F"))
+            put(CalendarContract.Calendars.CALENDAR_COLOR, Color.parseColor("#1565C0"))
             put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL, CalendarContract.Calendars.CAL_ACCESS_OWNER)
             put(CalendarContract.Calendars.OWNER_ACCOUNT, accountName)
             put(CalendarContract.Calendars.CALENDAR_TIME_ZONE, TimeZone.getDefault().id)

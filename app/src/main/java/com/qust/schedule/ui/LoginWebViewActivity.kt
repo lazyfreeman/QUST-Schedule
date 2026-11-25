@@ -78,7 +78,7 @@ class LoginWebViewActivity : ComponentActivity() {
         val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(24, 20, 24, 20)
-            setBackgroundColor(0xFF006064.toInt())
+            setBackgroundColor(0xFF1565C0.toInt())
         }
 
         tvStatus = TextView(this).apply {
@@ -92,7 +92,7 @@ class LoginWebViewActivity : ComponentActivity() {
         btnConfigCreds = Button(this).apply {
             text = "凭据设置"
             textSize = 12f
-            setBackgroundColor(0xFF00838F.toInt())
+            setBackgroundColor(0xFF1E88E5.toInt())
             setTextColor(0xFFFFFFFF.toInt())
             setOnClickListener {
                 showCredentialsDialog()
@@ -109,7 +109,7 @@ class LoginWebViewActivity : ComponentActivity() {
         btnExtract = Button(this).apply {
             text = "手动提取"
             textSize = 12f
-            setBackgroundColor(0xFF00838F.toInt())
+            setBackgroundColor(0xFF1E88E5.toInt())
             setTextColor(0xFFFFFFFF.toInt())
             setOnClickListener {
                 val currentUrl = webView.url ?: ""

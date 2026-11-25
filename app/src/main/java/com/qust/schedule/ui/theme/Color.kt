@@ -2,13 +2,13 @@ package com.qust.schedule.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val QustPrimary = Color(0xFF006064)
-val QustPrimaryLight = Color(0xFF428E92)
-val QustPrimaryDark = Color(0xFF00363A)
+val QustPrimary = Color(0xFF1565C0)
+val QustPrimaryLight = Color(0xFF5E92F3)
+val QustPrimaryDark = Color(0xFF003C8F)
 
-val QustSecondary = Color(0xFF00838F)
-val QustSecondaryLight = Color(0xFF4FB3BF)
-val QustSecondaryDark = Color(0xFF005662)
+val QustSecondary = Color(0xFF1E88E5)
+val QustSecondaryLight = Color(0xFF6AB7FF)
+val QustSecondaryDark = Color(0xFF005CB2)
 
 val BackgroundLight = Color(0xFFF7F9FA)
 val SurfaceLight = Color(0xFFFFFFFF)
