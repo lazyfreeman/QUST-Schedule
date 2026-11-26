@@ -5,11 +5,15 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -64,7 +68,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -89,7 +95,7 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import kotlin.math.absoluteValue
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun MainScreen(
     courses: List<Course>,
@@ -102,6 +108,7 @@ fun MainScreen(
     onOpenSettings: () -> Unit,
     onOpenCustomTimeSlots: () -> Unit
 ) {
+    val coroutineScope = rememberCoroutineScope()
     val today = remember { LocalDate.now() }
     val firstMonday = remember(termConfig.firstMonday) { termConfig.getFirstMondayLocalDate() }
 
@@ -117,9 +124,17 @@ fun MainScreen(
         maxOf(20, maxInCourses, calculatedCurrentWeek).coerceAtMost(30)
     }
 
-    var selectedWeek by remember(calculatedCurrentWeek) {
-        mutableIntStateOf(calculatedCurrentWeek.coerceIn(1, maxWeek))
+    val initialPage = remember(calculatedCurrentWeek, maxWeek) {
+        (calculatedCurrentWeek - 1).coerceIn(0, maxWeek - 1)
     }
+
+    val pagerState = rememberPagerState(
+        initialPage = initialPage,
+        pageCount = { maxWeek }
+    )
+
+    val selectedWeek = pagerState.currentPage + 1
+    val verticalScrollState = rememberScrollState()
 
     var isWeekSelectorExpanded by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
@@ -171,7 +186,11 @@ fun MainScreen(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(Color.White.copy(alpha = 0.25f))
-                                    .clickable { selectedWeek = calculatedCurrentWeek }
+                                    .clickable {
+                                        coroutineScope.launch {
+                                            pagerState.scrollToPage((calculatedCurrentWeek - 1).coerceIn(0, maxWeek - 1))
+                                        }
+                                    }
                                     .padding(horizontal = 8.dp, vertical = 3.dp)
                             ) {
                                 Text(
@@ -282,7 +301,9 @@ fun MainScreen(
                     selectedWeek = selectedWeek,
                     maxWeek = maxWeek,
                     onSelectWeek = { week ->
-                        selectedWeek = week
+                        coroutineScope.launch {
+                            pagerState.scrollToPage(week - 1)
+                        }
                         isWeekSelectorExpanded = false
                     }
                 )
@@ -301,18 +322,28 @@ fun MainScreen(
                     onOpenCustomTimeSlots = onOpenCustomTimeSlots
                 )
 
-                // 核心：课程表网格视图
-                TimetableGrid(
-                    courses = courses,
-                    selectedWeek = selectedWeek,
-                    selectedMonday = selectedMonday,
-                    today = today,
-                    timeSlots = timeSlots,
-                    enableSummerTime = termConfig.enableSummerTime,
-                    onCourseClick = { clickedCourses ->
-                        detailCoursesForDialog = clickedCourses
+                // 核心：支持左右滑动切换周次的课程表网格视图
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize()
+                ) { page ->
+                    val pageWeek = page + 1
+                    val pageMonday = remember(firstMonday, pageWeek) {
+                        firstMonday.plusWeeks((pageWeek - 1).toLong())
                     }
-                )
+                    TimetableGrid(
+                        courses = courses,
+                        selectedWeek = pageWeek,
+                        selectedMonday = pageMonday,
+                        today = today,
+                        timeSlots = timeSlots,
+                        enableSummerTime = termConfig.enableSummerTime,
+                        verticalScrollState = verticalScrollState,
+                        onCourseClick = { clickedCourses ->
+                            detailCoursesForDialog = clickedCourses
+                        }
+                    )
+                }
             }
         }
     }
@@ -371,12 +402,12 @@ private fun WeekSelectorPanel(
     maxWeek: Int,
     onSelectWeek: (Int) -> Unit
 ) {
-    val targetIndex = (currentWeek - 1).coerceIn(0, (maxWeek - 1).coerceAtLeast(0))
-    val initialIndex = remember(currentWeek, maxWeek) { (targetIndex - 2).coerceAtLeast(0) }
+    val targetIndex = (selectedWeek - 1).coerceIn(0, (maxWeek - 1).coerceAtLeast(0))
+    val initialIndex = remember(selectedWeek, maxWeek) { (targetIndex - 2).coerceAtLeast(0) }
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
 
-    LaunchedEffect(currentWeek, maxWeek) {
-        listState.scrollToItem(initialIndex)
+    LaunchedEffect(selectedWeek, maxWeek) {
+        listState.animateScrollToItem((selectedWeek - 3).coerceAtLeast(0))
     }
 
     Card(
@@ -566,6 +597,7 @@ private fun TimetableGrid(
     today: LocalDate,
     timeSlots: List<TimeSlot>,
     enableSummerTime: Boolean,
+    verticalScrollState: ScrollState,
     onCourseClick: (List<Course>) -> Unit
 ) {
     val daysOfWeek = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
@@ -634,7 +666,7 @@ private fun TimetableGrid(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(verticalScrollState)
         ) {
             // 左侧时间与节次纵轴
             Column(
