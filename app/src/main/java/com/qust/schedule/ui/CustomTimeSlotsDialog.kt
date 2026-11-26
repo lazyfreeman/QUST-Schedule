@@ -120,31 +120,28 @@ fun CustomTimeSlotsDialog(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // 预览模式切换：冬时制 vs 夏时制
+                // 预览模式切换：冬时制 vs 夏时制（标题与切换按钮分行，避免按钮被挤压换行）
+                Text(
+                    text = "各节次时间表 (${slots.size}节)",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.height(6.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "各节次时间表 (${slots.size}节)",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium
+                    FilterChip(
+                        selected = !previewSummerTime,
+                        onClick = { previewSummerTime = false },
+                        label = { Text("冬时制/标准", fontSize = 11.sp, maxLines = 1, softWrap = false) }
                     )
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        FilterChip(
-                            selected = !previewSummerTime,
-                            onClick = { previewSummerTime = false },
-                            label = { Text("冬时制/标准", fontSize = 11.sp) }
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        FilterChip(
-                            selected = previewSummerTime,
-                            onClick = { previewSummerTime = true },
-                            label = { Text("夏时制(+30m)", fontSize = 11.sp) }
-                        )
-                    }
+                    FilterChip(
+                        selected = previewSummerTime,
+                        onClick = { previewSummerTime = true },
+                        label = { Text("夏时制(+30m)", fontSize = 11.sp, maxLines = 1, softWrap = false) }
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))
