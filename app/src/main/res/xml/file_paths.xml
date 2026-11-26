@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 应用内更新 APK 的下载目录（cacheDir/updates），供系统安装器读取 -->
+    <cache-path
+        name="updates"
+        path="updates/" />
+</paths>

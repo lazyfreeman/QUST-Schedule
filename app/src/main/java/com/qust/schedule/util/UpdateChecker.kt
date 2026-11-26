@@ -39,8 +39,8 @@ object UpdateChecker {
 
     /** 常用 GitHub 加速镜像，按顺序探测，首个可用的即被采用 */
     val MIRROR_PREFIXES = listOf(
+        "https://gh-proxy.org/",
         "https://ghfast.top/",
-        "https://gh-proxy.com/",
         "https://ghproxy.net/"
     )
 
@@ -98,9 +98,13 @@ object UpdateChecker {
 
     // ---------------- GitHub 直连：官方 API ----------------
 
-    private fun fetchFromGitHub(): UpdateInfo {
+    private fun fetchFromGitHub(): UpdateInfo =
+        fetchReleaseJson("https://api.github.com/repos/$REPO/releases/latest", mirrorPrefix = null)
+
+    /** 请求 GitHub Release API（可经镜像代理）并解析完整 Release 信息 */
+    private fun fetchReleaseJson(apiUrl: String, mirrorPrefix: String?): UpdateInfo {
         val request = Request.Builder()
-            .url("https://api.github.com/repos/$REPO/releases/latest")
+            .url(apiUrl)
             .header("Accept", "application/vnd.github+json")
             .build()
 
@@ -124,48 +128,81 @@ object UpdateChecker {
                     ?: "https://github.com/$REPO/releases/tag/$tag",
                 apkDownloadUrl = apkUrl,
                 apkSizeBytes = apkAsset?.get("size")?.takeIf { !it.isJsonNull }?.asLong ?: 0L,
-                mirrorPrefix = null
+                mirrorPrefix = mirrorPrefix
             )
         }
     }
 
-    // ---------------- 镜像加速：代理 releases/latest 重定向 ----------------
+    // ---------------- 镜像加速 ----------------
 
     private fun fetchFromMirror(): UpdateInfo {
         var lastError: Exception? = null
         for (prefix in MIRROR_PREFIXES) {
+            // 策略一：镜像代理 GitHub API（如 gh-proxy.org），可获取完整更新日志与包大小
             try {
-                val request = Request.Builder()
-                    .url("${prefix}https://github.com/$REPO/releases/latest")
-                    .build()
-
-                noRedirectClient.newCall(request).execute().use { response ->
-                    // GitHub 对 /releases/latest 返回 302，Location 中带最新 tag
-                    val tag = when {
-                        response.isRedirect ->
-                            extractTagFromUrl(response.header("Location") ?: "")
-                        response.isSuccessful ->
-                            // 部分镜像会代跟随重定向直接返回最终页面 HTML
-                            extractTagFromUrl(response.request.url.toString())
-                                ?: extractTagFromUrl(response.body?.string() ?: "")
-                        else -> throw IOException("HTTP ${response.code}")
-                    } ?: throw IOException("未能从镜像响应中解析版本号")
-
-                    return UpdateInfo(
-                        tagName = tag,
-                        releaseNotes = "",
-                        releasePageUrl = "https://github.com/$REPO/releases/tag/$tag",
-                        apkDownloadUrl = buildApkUrl(tag),
-                        apkSizeBytes = 0L,
-                        mirrorPrefix = prefix
-                    )
-                }
+                return fetchReleaseJson(
+                    "${prefix}https://api.github.com/repos/$REPO/releases/latest",
+                    mirrorPrefix = prefix
+                )
+            } catch (e: Exception) {
+                lastError = e
+            }
+            // 策略二：镜像代理 releases/latest 页面，从重定向/HTML 中解析 tag（如 ghfast.top）
+            try {
+                return fetchLatestTagVia("${prefix}https://github.com/$REPO/releases/latest", prefix)
             } catch (e: Exception) {
                 lastError = e
             }
         }
         throw lastError ?: IOException("所有镜像均不可用")
     }
+
+    /**
+     * 通过单个镜像解析最新 tag。
+     * 除 GitHub 对 /releases/latest 的 302（Location 带 tag）外，
+     * 部分镜像入口域名会先跳转到实际服务域名（如 gh-proxy.org → gh-proxy.com），
+     * 这类不含 tag 的中间跳转最多跟随 2 跳。
+     */
+    private fun fetchLatestTagVia(startUrl: String, prefix: String): UpdateInfo {
+        var url = startUrl
+        repeat(3) {
+            val request = Request.Builder().url(url).build()
+            noRedirectClient.newCall(request).execute().use { response ->
+                when {
+                    response.isRedirect -> {
+                        val location = response.header("Location") ?: ""
+                        extractTagFromUrl(location)?.let { tag ->
+                            return buildMirrorInfo(tag, prefix)
+                        }
+                        if (location.startsWith("https://") || location.startsWith("http://")) {
+                            // 镜像自身的入口跳转，继续跟随
+                            url = location
+                        } else {
+                            throw IOException("未能从镜像重定向中解析版本号")
+                        }
+                    }
+                    response.isSuccessful -> {
+                        // 部分镜像会代跟随重定向直接返回最终页面 HTML
+                        val tag = extractTagFromUrl(response.request.url.toString())
+                            ?: extractTagFromUrl(response.body?.string() ?: "")
+                            ?: throw IOException("未能从镜像响应中解析版本号")
+                        return buildMirrorInfo(tag, prefix)
+                    }
+                    else -> throw IOException("HTTP ${response.code}")
+                }
+            }
+        }
+        throw IOException("镜像重定向次数过多")
+    }
+
+    private fun buildMirrorInfo(tag: String, prefix: String): UpdateInfo = UpdateInfo(
+        tagName = tag,
+        releaseNotes = "",
+        releasePageUrl = "https://github.com/$REPO/releases/tag/$tag",
+        apkDownloadUrl = buildApkUrl(tag),
+        apkSizeBytes = 0L,
+        mirrorPrefix = prefix
+    )
 
     /** 与 CI 产物命名规则一致：QUST-Schedule-{tag}.apk */
     private fun buildApkUrl(tag: String): String =

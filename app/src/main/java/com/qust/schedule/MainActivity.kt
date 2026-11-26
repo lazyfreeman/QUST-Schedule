@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -13,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import com.qust.schedule.calendar.CalendarHelper
 import com.qust.schedule.model.Course
@@ -31,6 +33,7 @@ import com.qust.schedule.util.UpdateChecker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
@@ -187,7 +190,8 @@ class MainActivity : ComponentActivity() {
                             } catch (e: Exception) {
                                 Toast.makeText(this, "无法打开下载链接，请安装浏览器后重试", Toast.LENGTH_SHORT).show()
                             }
-                        }
+                        },
+                        onInstall = { file -> installApk(file) }
                     )
                 }
 
@@ -219,6 +223,39 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
+        }
+    }
+
+    /** 调起系统安装器安装应用内下载的更新 APK */
+    private fun installApk(file: File) {
+        if (!file.exists()) {
+            Toast.makeText(this, "安装包不存在，请重新下载", Toast.LENGTH_SHORT).show()
+            return
+        }
+        // Android 8+ 需要用户授权「安装未知应用」
+        if (!packageManager.canRequestPackageInstalls()) {
+            Toast.makeText(this, "请先允许本应用「安装未知应用」，返回后再次点击安装", Toast.LENGTH_LONG).show()
+            try {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:$packageName")
+                    )
+                )
+            } catch (e: Exception) {
+                Toast.makeText(this, "无法打开安装权限设置页", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            Toast.makeText(this, "无法调起系统安装器：${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 

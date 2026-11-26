@@ -2,6 +2,7 @@ package com.qust.schedule.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,6 +19,7 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.SystemUpdateAlt
 import androidx.compose.material3.AlertDialog
@@ -28,12 +30,14 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -44,10 +48,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.qust.schedule.ui.theme.QustPrimary
+import com.qust.schedule.ui.theme.QustScheduleTheme
 import com.qust.schedule.ui.theme.SuccessGreen
+import com.qust.schedule.util.ApkDownloadManager
 import com.qust.schedule.util.UpdateCheckResult
 import com.qust.schedule.util.UpdateChecker
 import com.qust.schedule.util.UpdateSource
@@ -55,13 +62,15 @@ import com.qust.schedule.util.UpdateSource
 /**
  * 检查更新对话框：
  * - 支持「GitHub 直连」与「镜像加速」两条检查线路，可随时切换
- * - 发现新版本时展示更新日志，并提供 GitHub / 镜像两种下载方式（跳转浏览器下载 APK）
+ * - 发现新版本时展示更新日志，提供 GitHub / 镜像两种应用内直接下载方式，
+ *   下载完成后一键调起系统安装器；也可兜底跳转浏览器下载
  */
 @Composable
 fun UpdateDialog(
     currentVersion: String,
     onDismiss: () -> Unit,
-    onOpenUrl: (String) -> Unit
+    onOpenUrl: (String) -> Unit,
+    onInstall: (java.io.File) -> Unit
 ) {
     val context = LocalContext.current
     var source by remember { mutableStateOf(UpdateSource.GITHUB) }
@@ -244,42 +253,17 @@ fun UpdateDialog(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = "选择下载方式（将跳转浏览器下载 APK）：",
+                            text = "选择下载方式（应用内直接下载，完成后可一键安装）：",
                             fontSize = 12.sp,
                             color = Color.Gray
                         )
                         Spacer(modifier = Modifier.height(6.dp))
-                        Row(modifier = Modifier.fillMaxWidth()) {
-                            Button(
-                                onClick = { onOpenUrl(info.apkDownloadUrl) },
-                                colors = ButtonDefaults.buttonColors(containerColor = QustPrimary),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    Icons.Default.Download,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("GitHub 下载", fontSize = 12.sp)
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            OutlinedButton(
-                                onClick = {
-                                    onOpenUrl(UpdateChecker.mirrorUrl(info.apkDownloadUrl, info.mirrorPrefix))
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    Icons.Default.Bolt,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = QustPrimary
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("镜像加速下载", fontSize = 12.sp, color = QustPrimary)
-                            }
-                        }
+                        UpdateDownloadButtons(
+                            apkDownloadUrl = info.apkDownloadUrl,
+                            mirrorPrefix = info.mirrorPrefix,
+                            onOpenUrl = onOpenUrl,
+                            onInstall = onInstall
+                        )
                     }
                 }
             }
@@ -290,4 +274,148 @@ fun UpdateDialog(
             }
         }
     )
+}
+
+/**
+ * GitHub / 镜像双通道应用内下载：
+ * 空闲时展示两个下载按钮；下载中展示进度条与取消；完成后展示安装按钮。
+ * 另提供「改用浏览器下载」兜底入口。
+ */
+@Composable
+internal fun UpdateDownloadButtons(
+    apkDownloadUrl: String,
+    mirrorPrefix: String?,
+    onOpenUrl: (String) -> Unit,
+    onInstall: (java.io.File) -> Unit
+) {
+    val context = LocalContext.current
+    val downloadState by ApkDownloadManager.state.collectAsState()
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        when (val state = downloadState) {
+            is ApkDownloadManager.State.Downloading -> {
+                if (state.totalBytes > 0) {
+                    LinearProgressIndicator(
+                        progress = { state.percent / 100f },
+                        color = QustPrimary,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        color = QustPrimary,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = if (state.totalBytes > 0) {
+                            "下载中 %d%%（%.1f / %.1f MB）".format(
+                                state.percent,
+                                state.downloadedBytes / 1024f / 1024f,
+                                state.totalBytes / 1024f / 1024f
+                            )
+                        } else {
+                            "下载中 %.1f MB".format(state.downloadedBytes / 1024f / 1024f)
+                        },
+                        fontSize = 12.sp,
+                        color = Color.Gray,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { ApkDownloadManager.cancel() }) {
+                        Text("取消", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+
+            is ApkDownloadManager.State.Ready -> {
+                Button(
+                    onClick = { onInstall(state.file) },
+                    colors = ButtonDefaults.buttonColors(containerColor = SuccessGreen),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        Icons.Default.InstallMobile,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("下载完成，点击安装新版本", fontWeight = FontWeight.Medium)
+                }
+                TextButton(onClick = { ApkDownloadManager.reset() }) {
+                    Text("重新下载", fontSize = 12.sp, color = Color.Gray)
+                }
+            }
+
+            else -> {
+                if (state is ApkDownloadManager.State.Failed) {
+                    Text(
+                        text = "下载失败：${state.message}，可重试或改用浏览器下载",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.error,
+                        lineHeight = 16.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Button(
+                        onClick = { ApkDownloadManager.start(context, apkDownloadUrl) },
+                        colors = ButtonDefaults.buttonColors(containerColor = QustPrimary),
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            Icons.Default.Download,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("GitHub 下载", fontSize = 12.sp, maxLines = 1, softWrap = false)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    OutlinedButton(
+                        onClick = {
+                            ApkDownloadManager.start(
+                                context,
+                                UpdateChecker.mirrorUrl(apkDownloadUrl, mirrorPrefix)
+                            )
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            Icons.Default.Bolt,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = QustPrimary
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("镜像加速下载", fontSize = 12.sp, color = QustPrimary, maxLines = 1, softWrap = false)
+                    }
+                }
+                TextButton(
+                    onClick = { onOpenUrl(apkDownloadUrl) },
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                ) {
+                    Text("改用浏览器下载", fontSize = 11.sp, color = Color.Gray)
+                }
+            }
+        }
+    }
+}
+
+@Preview(name = "下载按钮-窄屏", widthDp = 266)
+@Composable
+private fun UpdateDownloadButtonsPreview() {
+    QustScheduleTheme {
+        UpdateDownloadButtons(
+            apkDownloadUrl = "https://github.com/lazyfreeman/QUST-Schedule/releases/download/v1.2.0/QUST-Schedule-v1.2.0.apk",
+            mirrorPrefix = null,
+            onOpenUrl = {},
+            onInstall = {}
+        )
+    }
 }
