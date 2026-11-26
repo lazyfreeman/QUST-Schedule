@@ -1,6 +1,16 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) {
+        load(FileInputStream(file))
+    }
 }
 
 android {
@@ -11,8 +21,8 @@ android {
         applicationId = "com.qust.schedule"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.2.1"
+        versionCode = 5
+        versionName = "1.2.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -20,10 +30,19 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file(localProperties.getProperty("store.file", "release.jks"))
+            storePassword = localProperties.getProperty("store.password") ?: System.getenv("KEYSTORE_PASSWORD") ?: ""
+            keyAlias = localProperties.getProperty("key.alias") ?: System.getenv("KEY_ALIAS") ?: ""
+            keyPassword = localProperties.getProperty("key.password") ?: System.getenv("KEY_PASSWORD") ?: ""
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
