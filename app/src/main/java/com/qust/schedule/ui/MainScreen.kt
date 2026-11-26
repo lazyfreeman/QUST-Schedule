@@ -91,7 +91,6 @@ import com.qust.schedule.ui.theme.QustPrimary
 import com.qust.schedule.ui.theme.QustSecondary
 import com.qust.schedule.ui.theme.SuccessGreen
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import kotlin.math.absoluteValue
 
@@ -101,7 +100,6 @@ fun MainScreen(
     courses: List<Course>,
     termConfig: TermConfig,
     timeSlots: List<TimeSlot>,
-    lastSyncTime: String?,
     onLaunchLogin: () -> Unit,
     onSyncCalendar: () -> Unit,
     onClearCalendar: () -> Unit,
@@ -140,11 +138,6 @@ fun MainScreen(
     var showMoreMenu by remember { mutableStateOf(false) }
     var showClearConfirmDialog by remember { mutableStateOf(false) }
     var detailCoursesForDialog by remember { mutableStateOf<List<Course>?>(null) }
-
-    // 当前选定周的周一
-    val selectedMonday = remember(firstMonday, selectedWeek) {
-        firstMonday.plusWeeks((selectedWeek - 1).toLong())
-    }
 
     Scaffold(
         topBar = {
@@ -313,15 +306,6 @@ fun MainScreen(
                 // 空数据状态
                 EmptyCourseState(onLaunchLogin = onLaunchLogin)
             } else {
-                // 顶部信息状态胶囊条（显示当前周日期范围、夏令时与同步状态）
-                WeekStatusBar(
-                    selectedMonday = selectedMonday,
-                    courseCount = courses.size,
-                    enableSummerTime = termConfig.enableSummerTime,
-                    lastSyncTime = lastSyncTime,
-                    onOpenCustomTimeSlots = onOpenCustomTimeSlots
-                )
-
                 // 核心：支持左右滑动切换周次的课程表网格视图
                 HorizontalPager(
                     state = pagerState,
@@ -491,95 +475,6 @@ private fun WeekSelectorPanel(
                             )
                         }
                     }
-                }
-            }
-        }
-    }
-}
-
-/**
- * 顶部极简信息状态条
- */
-@Composable
-private fun WeekStatusBar(
-    selectedMonday: LocalDate,
-    courseCount: Int,
-    enableSummerTime: Boolean,
-    lastSyncTime: String?,
-    onOpenCustomTimeSlots: () -> Unit
-) {
-    val selectedSunday = selectedMonday.plusDays(6)
-    val isSummerActive = enableSummerTime && DefaultTimeSlots.isSummerTime(selectedMonday)
-    val dateRangeFormatter = DateTimeFormatter.ofPattern("MM.dd")
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 14.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = Icons.Default.CalendarMonth,
-                contentDescription = null,
-                modifier = Modifier.size(14.dp),
-                tint = Color.Gray
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                text = "${selectedMonday.format(dateRangeFormatter)} - ${selectedSunday.format(dateRangeFormatter)}",
-                fontSize = 12.sp,
-                color = Color.DarkGray
-            )
-
-            if (isSummerActive) {
-                Spacer(modifier = Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(QustSecondary.copy(alpha = 0.12f))
-                        .padding(horizontal = 5.dp, vertical = 1.dp)
-                ) {
-                    Text(
-                        text = "夏时制+30m",
-                        fontSize = 10.sp,
-                        color = QustSecondary,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-        }
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = "共 $courseCount 门课" + if (lastSyncTime != null) " · 已同步" else "",
-                fontSize = 12.sp,
-                color = Color.Gray
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                    .clickable(onClick = onOpenCustomTimeSlots)
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Schedule,
-                        contentDescription = null,
-                        modifier = Modifier.size(11.dp),
-                        tint = QustPrimary
-                    )
-                    Spacer(modifier = Modifier.width(2.dp))
-                    Text(
-                        text = "作息",
-                        fontSize = 10.sp,
-                        color = QustPrimary,
-                        fontWeight = FontWeight.Medium
-                    )
                 }
             }
         }

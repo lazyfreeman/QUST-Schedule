@@ -92,7 +92,6 @@ class MainActivity : ComponentActivity() {
                     courses = courses,
                     termConfig = termConfig,
                     timeSlots = timeSlots,
-                    lastSyncTime = lastSyncTime,
                     onLaunchLogin = {
                         val intent = Intent(this, LoginWebViewActivity::class.java)
                         loginLauncher.launch(intent)
