@@ -3,6 +3,7 @@ package com.qust.schedule
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -23,8 +24,10 @@ import com.qust.schedule.ui.FirstDayGuideDialog
 import com.qust.schedule.ui.LoginWebViewActivity
 import com.qust.schedule.ui.MainScreen
 import com.qust.schedule.ui.SettingsDialog
+import com.qust.schedule.ui.UpdateDialog
 import com.qust.schedule.ui.theme.QustScheduleTheme
 import com.qust.schedule.util.PreferenceManager
+import com.qust.schedule.util.UpdateChecker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -42,6 +45,7 @@ class MainActivity : ComponentActivity() {
     private var showSettingsDialog by mutableStateOf(false)
     private var showCustomTimeSlotsDialog by mutableStateOf(false)
     private var showFirstDayGuideDialog by mutableStateOf(false)
+    private var showUpdateDialog by mutableStateOf(false)
     private var importedCourseCount by mutableIntStateOf(0)
 
     // 登录与课表抓取回调
@@ -128,6 +132,9 @@ class MainActivity : ComponentActivity() {
                     },
                     onOpenCustomTimeSlots = {
                         showCustomTimeSlotsDialog = true
+                    },
+                    onCheckUpdate = {
+                        showUpdateDialog = true
                     }
                 )
 
@@ -166,6 +173,20 @@ class MainActivity : ComponentActivity() {
                             prefManager.saveTimeSlots(updatedSlots, isCustomized = true)
                             showCustomTimeSlotsDialog = false
                             Toast.makeText(this, "作息时间已更新，建议重新点击【同步到日历】生效", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                }
+
+                if (showUpdateDialog) {
+                    UpdateDialog(
+                        currentVersion = UpdateChecker.getCurrentVersion(this),
+                        onDismiss = { showUpdateDialog = false },
+                        onOpenUrl = { url ->
+                            try {
+                                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                            } catch (e: Exception) {
+                                Toast.makeText(this, "无法打开下载链接，请安装浏览器后重试", Toast.LENGTH_SHORT).show()
+                            }
                         }
                     )
                 }

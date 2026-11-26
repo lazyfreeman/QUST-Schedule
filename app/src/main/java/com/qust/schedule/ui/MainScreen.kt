@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SystemUpdateAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -104,7 +105,8 @@ fun MainScreen(
     onSyncCalendar: () -> Unit,
     onClearCalendar: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenCustomTimeSlots: () -> Unit
+    onOpenCustomTimeSlots: () -> Unit,
+    onCheckUpdate: () -> Unit
 ) {
     val coroutineScope = rememberCoroutineScope()
     val today = remember { LocalDate.now() }
@@ -251,6 +253,16 @@ fun MainScreen(
                                 },
                                 leadingIcon = {
                                     Icon(Icons.Default.Settings, contentDescription = null)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("检查更新") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    onCheckUpdate()
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.SystemUpdateAlt, contentDescription = null)
                                 }
                             )
                             HorizontalDivider()
