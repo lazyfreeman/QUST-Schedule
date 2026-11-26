@@ -8,7 +8,6 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Arrangement
@@ -842,7 +841,11 @@ private fun CourseDetailSheet(
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var selectedIndex by remember { mutableIntStateOf(0) }
+    val initialIndex = remember(courses, selectedWeek) {
+        val idx = courses.indexOfFirst { it.weeks.contains(selectedWeek) }
+        if (idx >= 0) idx else 0
+    }
+    var selectedIndex by remember(courses, selectedWeek) { mutableIntStateOf(initialIndex) }
     val currentCourse = courses.getOrNull(selectedIndex) ?: courses.first()
 
     ModalBottomSheet(
@@ -864,13 +867,14 @@ private fun CourseDetailSheet(
                     color = Color.Gray
                 )
                 Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
+                val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+                LazyRow(
+                    state = listState,
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    courses.forEachIndexed { index, c ->
+                    items(count = courses.size) { index ->
+                        val c = courses[index]
                         val isCurrentSlot = index == selectedIndex
                         FilterChip(
                             selected = isCurrentSlot,
