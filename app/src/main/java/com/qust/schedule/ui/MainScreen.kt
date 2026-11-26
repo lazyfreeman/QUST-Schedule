@@ -9,6 +9,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,6 +60,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -369,6 +372,14 @@ private fun WeekSelectorPanel(
     maxWeek: Int,
     onSelectWeek: (Int) -> Unit
 ) {
+    val targetIndex = (currentWeek - 1).coerceIn(0, (maxWeek - 1).coerceAtLeast(0))
+    val initialIndex = remember(currentWeek, maxWeek) { (targetIndex - 2).coerceAtLeast(0) }
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+
+    LaunchedEffect(currentWeek, maxWeek) {
+        listState.scrollToItem(initialIndex)
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -399,13 +410,13 @@ private fun WeekSelectorPanel(
             Spacer(modifier = Modifier.height(10.dp))
 
             // 横向滑动行展示周次
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+            LazyRow(
+                state = listState,
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                for (week in 1..maxWeek) {
+                items(count = maxWeek) { index ->
+                    val week = index + 1
                     val isSelected = week == selectedWeek
                     val isCurrent = week == currentWeek
 
